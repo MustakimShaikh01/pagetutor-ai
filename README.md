@@ -31,16 +31,16 @@ PageTutor AI transforms any uploaded PDF into a complete learning experience:
 
 ```
                          ┌─────────────────────────────┐
-                         │       Cloudflare CDN/WAF     │
+                         │       Cloudflare CDN/WAF    │
                          └──────────────┬──────────────┘
                                         │
                          ┌──────────────▼──────────────┐
-                         │      Load Balancer (Nginx)   │
-                         └──────┬──────────────┬────────┘
+                         │      Load Balancer (Nginx)  │
+                         └──────┬──────────────┬───────┘
                                 │              │
                ┌────────────────▼─┐       ┌───▼───────────────┐
-               │  Next.js SSR     │       │  FastAPI Gateway   │
-               │  Frontend        │       │  (API Gateway)     │
+               │  Next.js SSR     │       │  FastAPI Gateway  │
+               │  Frontend        │       │  (API Gateway)    │
                └──────────────────┘       └───┬───────────────┘
                                               │
               ┌───────────────────────────────┼───────────────────────┐
