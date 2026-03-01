@@ -1,4 +1,4 @@
-# 🎓 PageTutor AI
+#  PageTutor AI
 
 > **Enterprise-Grade AI-Powered PDF Learning Platform**  
 > Built by **Mustakim Shaikh** | [GitHub](https://github.com/MustakimShaikh01)
