@@ -1,0 +1,76 @@
+# PageTutor AI - Git Ignore
+# Author: Mustakim Shaikh (https://github.com/MustakimShaikh01)
+
+# ===== SECRETS — NEVER COMMIT =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.tox/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# ===== Node.js / Next.js =====
+node_modules/
+.next/
+out/
+.vercel/
+*.log
+npm-debug.log*
+
+# ===== Docker =====
+*.dockerignore
+
+# ===== Database =====
+*.sqlite
+*.db
+postgres_data/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ===== Models =====
+models/
+*.bin
+*.safetensors
+*.gguf
+
+# ===== Uploads (local dev) =====
+uploads/
+media/
+temp/
+
+# ===== Kubernetes Configs =====
+kubeconfig.yml
+kubeconfig.yaml
+
+# ===== Coverage =====
+coverage.xml
+.coverage
+
+# ===== Logs =====
+*.log
+logs/

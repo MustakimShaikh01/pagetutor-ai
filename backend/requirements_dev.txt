@@ -1,0 +1,41 @@
+# ============================================================
+# PageTutor AI - Core Local Dev Requirements (FAST INSTALL)
+# Author: Mustakim Shaikh (https://github.com/MustakimShaikh01)
+#
+# Only what's needed to start the FastAPI server locally.
+# Install torch / sentence-transformers separately when needed.
+# ============================================================
+
+# Core FastAPI
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# Config
+pydantic==2.7.4
+pydantic-settings==2.3.3
+
+# Auth
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.3
+
+# Async DB + SQLite
+sqlalchemy[asyncio]==2.0.31
+aiosqlite==0.20.0
+
+# HTTP
+httpx==0.27.0
+
+# Logging
+structlog==24.2.0
+
+# Monitoring
+prometheus-client==0.20.0
+
+# PDF
+pdfplumber==0.11.1
+
+# Utilities
+aiofiles==23.2.1
+python-slugify==8.0.4

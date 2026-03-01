@@ -1,0 +1,72 @@
+# ============================================================
+# PageTutor AI - Local Dev Requirements (no GPU, no Docker)
+# Author: Mustakim Shaikh (https://github.com/MustakimShaikh01)
+#
+# Minimal set for running FastAPI + Swagger locally.
+# Excludes: TTS, video generation, GPU libraries (install separately when needed)
+# ============================================================
+
+# Web Framework
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+python-multipart==0.0.9
+
+# Config & Validation
+pydantic==2.7.4
+pydantic-settings==2.3.3
+
+# Auth & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.3
+
+# Async Database (SQLite for local, PostgreSQL for prod)
+sqlalchemy[asyncio]==2.0.31
+aiosqlite==0.20.0                   # SQLite async driver (local dev)
+asyncpg==0.29.0                     # PostgreSQL async driver (production)
+alembic==1.13.1
+
+# Redis (optional — app works without it)
+redis[asyncio]==5.0.7
+
+# HTTP Client (for LLM calls)
+httpx==0.27.0
+
+# PDF Processing
+pdfplumber==0.11.1
+pypdf==4.2.0
+Pillow==10.4.0
+
+# AWS S3 (optional — local storage fallback available)
+boto3==1.34.144
+aioboto3==13.1.1
+
+# Logging
+structlog==24.2.0
+python-json-logger==2.0.7
+
+# Monitoring
+prometheus-client==0.20.0
+
+# PPT Generation
+python-pptx==1.0.0
+
+# Sentence Transformers (embeddings — CPU mode)
+sentence-transformers==3.0.1
+torch==2.3.1                        # CPU version is fine for local dev
+
+# Qdrant (optional — in-memory fallback available)
+qdrant-client==1.10.1
+
+# Celery (optional — for background jobs)
+celery[redis]==5.4.0
+kombu==5.3.4
+
+# Email (optional)
+emails==0.6
+jinja2==3.1.4
+
+# Utilities
+python-slugify==8.0.4
+aiofiles==23.2.1
+python-magic==0.4.27

@@ -1,0 +1,343 @@
+# ============================================================
+# PageTutor AI - Kubernetes Deployment Manifest
+# Author: Mustakim Shaikh (https://github.com/MustakimShaikh01)
+#
+# Resources:
+#   - Namespace
+#   - Deployments (api, frontend, workers)
+#   - Services
+#   - HorizontalPodAutoscaler
+#   - ConfigMap
+#   - Ingress (with Cloudflare)
+# ============================================================
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pagetutor-prod
+  labels:
+    app: pagetutor
+    environment: production
+
+---
+# ConfigMap — non-secret config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pagetutor-config
+  namespace: pagetutor-prod
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  LLM_MODEL_NAME: "mistralai/Mistral-7B-Instruct-v0.2"
+  LLM_MAX_TOKENS: "2048"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+  MAX_FILE_SIZE_MB: "50"
+  MAX_PAGE_COUNT: "500"
+  QDRANT_PORT: "6333"
+  S3_REGION: "us-east-1"
+
+---
+# Secret (use Kubernetes Secrets or external-secrets-operator in prod)
+# Values should come from AWS Secrets Manager or Vault
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pagetutor-secrets
+  namespace: pagetutor-prod
+type: Opaque
+stringData:
+  SECRET_KEY: "REPLACE_WITH_ACTUAL_SECRET"
+  DATABASE_URL: "REPLACE_WITH_ACTUAL_DB_URL"
+  REDIS_URL: "REPLACE_WITH_ACTUAL_REDIS_URL"
+  S3_ACCESS_KEY: "REPLACE_WITH_ACTUAL"
+  S3_SECRET_KEY: "REPLACE_WITH_ACTUAL"
+
+---
+# API Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pagetutor-api
+  namespace: pagetutor-prod
+  labels:
+    app: pagetutor-api
+    version: v1
+spec:
+  replicas: 3    # Start with 3, HPA will scale to 10
+  selector:
+    matchLabels:
+      app: pagetutor-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # Add 1 new pod at a time
+      maxUnavailable: 0  # Never remove a pod until new one is ready (zero downtime)
+  template:
+    metadata:
+      labels:
+        app: pagetutor-api
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Ensure pods spread across availability zones
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: pagetutor-api
+
+      containers:
+        - name: api
+          image: ghcr.io/mustakimshaikh01/pagetutor-backend:latest
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: pagetutor-config
+            - secretRef:
+                name: pagetutor-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          # Graceful shutdown: wait for requests to complete
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 15"]
+      terminationGracePeriodSeconds: 30
+
+---
+# API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: pagetutor-api-service
+  namespace: pagetutor-prod
+spec:
+  selector:
+    app: pagetutor-api
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# HorizontalPodAutoscaler — Auto-scale API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pagetutor-api-hpa
+  namespace: pagetutor-prod
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pagetutor-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70   # Scale up when CPU > 70%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80   # Scale up when memory > 80%
+    # Custom metric: scale based on request rate
+    - type: Pods
+      pods:
+        metric:
+          name: pagetutor_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "50"   # Scale when >50 req/s per pod
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60    # Wait 1 min before scaling up
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300   # Wait 5 min before scaling down
+
+---
+# LLM Worker Deployment (GPU)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pagetutor-llm-worker
+  namespace: pagetutor-prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pagetutor-llm-worker
+  template:
+    metadata:
+      labels:
+        app: pagetutor-llm-worker
+    spec:
+      # GPU node selector
+      nodeSelector:
+        accelerator: nvidia-a10g
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: llm-worker
+          image: ghcr.io/mustakimshaikh01/pagetutor-backend:latest
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - worker
+            - --queues=llm_queue,high_priority
+            - --concurrency=4
+            - --hostname=llm_worker@$(POD_NAME)
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: pagetutor-config
+            - secretRef:
+                name: pagetutor-secrets
+          resources:
+            requests:
+              cpu: "2000m"
+              memory: "8Gi"
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "4000m"
+              memory: "16Gi"
+              nvidia.com/gpu: "1"
+
+---
+# Media Worker Deployment (CPU)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pagetutor-media-worker
+  namespace: pagetutor-prod
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: pagetutor-media-worker
+  template:
+    metadata:
+      labels:
+        app: pagetutor-media-worker
+    spec:
+      containers:
+        - name: media-worker
+          image: ghcr.io/mustakimshaikh01/pagetutor-backend:latest
+          command:
+            - celery
+            - -A
+            - app.workers.celery_app
+            - worker
+            - --queues=media_queue,normal_priority,low_priority
+            - --concurrency=8
+          envFrom:
+            - configMapRef:
+                name: pagetutor-config
+            - secretRef:
+                name: pagetutor-secrets
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "4000m"
+              memory: "8Gi"
+
+---
+# Ingress — Cloudflare + Nginx Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pagetutor-ingress
+  namespace: pagetutor-prod
+  annotations:
+    # Nginx ingress controller
+    kubernetes.io/ingress.class: "nginx"
+    
+    # SSL/TLS
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # Rate limiting at Ingress level
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    
+    # Upload size
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    
+    # Timeouts for long operations
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    
+    # Enable CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+spec:
+  tls:
+    - hosts:
+        - pagetutor.ai
+        - api.pagetutor.ai
+      secretName: pagetutor-tls
+  rules:
+    - host: api.pagetutor.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pagetutor-api-service
+                port:
+                  number: 80
+    - host: pagetutor.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pagetutor-frontend-service
+                port:
+                  number: 80

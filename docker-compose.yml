@@ -1,0 +1,457 @@
+# ============================================================
+# PageTutor AI - Docker Compose (Full Stack)
+# Author: Mustakim Shaikh (https://github.com/MustakimShaikh01)
+#
+# Services:
+#   - nginx:          Load Balancer + Reverse Proxy
+#   - api:            FastAPI Backend (4 uvicorn workers)
+#   - frontend:       Next.js SSR Frontend
+#   - postgres:       Primary Database
+#   - redis:          Cache + Job Queue + Rate Limiting
+#   - minio:          S3-compatible Object Storage
+#   - qdrant:         Vector Database
+#   - llm_worker:     Celery GPU Worker (LLM inference)
+#   - media_worker:   Celery CPU Worker (TTS + video)
+#   - embed_worker:   Celery CPU Worker (embeddings)
+#   - celery_beat:    Task scheduler (cleanup, monitoring)
+#   - flower:         Celery task monitor dashboard
+#   - prometheus:     Metrics collection
+#   - grafana:        Metrics visualization dashboard
+# ============================================================
+
+version: '3.9'
+
+# ----------------------------------------------------------
+# Named volumes for persistent data
+# ----------------------------------------------------------
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:
+  prometheus_data:
+  grafana_data:
+
+    # ----------------------------------------------------------
+    # Network (single internal network for service communication)
+    # ----------------------------------------------------------
+networks:
+  pagetutor_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+services:
+
+  # ===========================================================
+  # NGINX — Load Balancer + SSL Termination + Static Files
+  # ===========================================================
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: pagetutor_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend/out:/usr/share/nginx/html:ro # Static export
+    depends_on:
+      - api
+      - frontend
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "nginx", "-t" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================
+  # API — FastAPI Backend
+  # ===========================================================
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_api
+    # Scale horizontally: docker-compose up --scale api=3
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pagetutor:${POSTGRES_PASSWORD}@postgres:5432/pagetutor_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=${MINIO_ROOT_USER}
+      - S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - LLM_BASE_URL=http://llm_server:8080/v1
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - ./backend:/app # Hot reload in development
+    # Traefik labels for production autoscaling
+    labels:
+      - "traefik.http.services.api.loadbalancer.server.port=8000"
+      - "traefik.http.services.api.loadbalancer.sticky.cookie=true"
+
+  # ===========================================================
+  # FRONTEND — Next.js SSR
+  # ===========================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pagetutor_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NODE_ENV=${ENVIRONMENT:-development}
+    depends_on:
+      - api
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================
+  # POSTGRESQL — Primary Database
+  # ===========================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: pagetutor_postgres
+    environment:
+      POSTGRES_USER: pagetutor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pagetutor_secret}
+      POSTGRES_DB: pagetutor_db
+      # Performance tuning for 1000+ concurrent users
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./infra/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=512MB
+        -c effective_cache_size=1536MB
+        -c work_mem=4MB
+        -c maintenance_work_mem=128MB
+        -c checkpoint_completion_target=0.9
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c wal_level=replica
+        -c log_min_duration_statement=1000
+    ports:
+      - "5432:5432"
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U pagetutor -d pagetutor_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================
+  # REDIS — Cache + Queue + Rate Limiting
+  # ===========================================================
+  redis:
+    image: redis:7.2-alpine
+    container_name: pagetutor_redis
+    command: >
+      redis-server
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --save 900 1
+        --save 300 10
+        --appendonly yes
+        --appendfsync everysec
+        --requirepass ${REDIS_PASSWORD:-redis_secret}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================================
+  # MINIO — S3-compatible Object Storage
+  # ===========================================================
+  minio:
+    image: minio/minio:latest
+    container_name: pagetutor_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+      # Lifecycle policy: auto-delete objects after 48h
+      MINIO_LIFECYCLE_ENABLED: "on"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001" # MinIO Console (admin UI)
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ===========================================================
+  # QDRANT — Vector Database
+  # ===========================================================
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: pagetutor_qdrant
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      # Memory optimization: mmap for large collections
+      QDRANT__STORAGE__STORAGE_PATH: /qdrant/storage
+      QDRANT__STORAGE__ON_DISK_PAYLOAD: true
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334" # gRPC port
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:6333/healthz" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================
+  # LLM WORKER — GPU Celery Worker (LLM inference)
+  # ===========================================================
+  llm_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_llm_worker
+    command: >
+      celery -A app.workers.celery_app worker
+        --queues=llm_queue,high_priority
+        --concurrency=${LLM_WORKER_CONCURRENCY:-4}
+        --prefetch-multiplier=1
+        --hostname=llm_worker@%h
+        --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pagetutor:${POSTGRES_PASSWORD}@postgres:5432/pagetutor_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=${MINIO_ROOT_USER}
+      - S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - LLM_BASE_URL=http://llm_server:8080/v1
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+    # GPU access — uncomment in production with NVIDIA runtime
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    # ===========================================================
+    # MEDIA WORKER — CPU Celery Worker (TTS + Video + PPT)
+    # ===========================================================
+  media_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_media_worker
+    command: >
+      celery -A app.workers.celery_app worker
+        --queues=media_queue,normal_priority,low_priority
+        --concurrency=${CPU_WORKER_CONCURRENCY:-8}
+        --prefetch-multiplier=1
+        --hostname=media_worker@%h
+        --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pagetutor:${POSTGRES_PASSWORD}@postgres:5432/pagetutor_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=${MINIO_ROOT_USER}
+      - S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+
+  # ===========================================================
+  # EMBED WORKER — CPU Worker (PDF indexing + embeddings)
+  # ===========================================================
+  embed_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_embed_worker
+    command: >
+      celery -A app.workers.celery_app worker
+        --queues=embed_queue
+        --concurrency=${EMBED_WORKER_CONCURRENCY:-4}
+        --prefetch-multiplier=1
+        --hostname=embed_worker@%h
+        --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pagetutor:${POSTGRES_PASSWORD}@postgres:5432/pagetutor_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_ACCESS_KEY=${MINIO_ROOT_USER}
+      - S3_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - QDRANT_HOST=qdrant
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - redis
+      - postgres
+      - qdrant
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+
+  # ===========================================================
+  # CELERY BEAT — Scheduler (cleanup, monitoring)
+  # ===========================================================
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_celery_beat
+    command: >
+      celery -A app.workers.celery_app beat
+        --loglevel=info
+        --scheduler celery.beat:PersistentScheduler
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://pagetutor:${POSTGRES_PASSWORD}@postgres:5432/pagetutor_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - SECRET_KEY=${SECRET_KEY}
+    depends_on:
+      - redis
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+
+  # ===========================================================
+  # FLOWER — Celery Task Monitor Dashboard
+  # ===========================================================
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: pagetutor_flower
+    command: >
+      celery -A app.workers.celery_app flower
+        --port=5555
+        --basic-auth=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-flower_admin}
+        --url_prefix=flower
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+
+  # ===========================================================
+  # PROMETHEUS — Metrics Collection
+  # ===========================================================
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: pagetutor_prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d' # Keep 30 days of metrics
+      - '--web.enable-lifecycle'
+    ports:
+      - "9090:9090"
+    networks:
+      - pagetutor_net
+    restart: unless-stopped
+
+  # ===========================================================
+  # GRAFANA — Metrics Dashboard
+  # ===========================================================
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: pagetutor_grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-grafana_admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s:%(http_port)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infra/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./infra/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - pagetutor_net
+    restart: unless-stopped

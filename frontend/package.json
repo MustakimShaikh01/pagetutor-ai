@@ -1,0 +1,38 @@
+{
+  "name": "pagetutor-ai-frontend",
+  "version": "1.0.0",
+  "description": "PageTutor AI Frontend - Enterprise PDF Learning Platform by Mustakim Shaikh",
+  "private": true,
+  "authors": [
+    {
+      "name": "Mustakim Shaikh",
+      "url": "https://github.com/MustakimShaikh01"
+    }
+  ],
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "swr": "^2.2.5",
+    "axios": "^1.7.2",
+    "lucide-react": "^0.396.0",
+    "framer-motion": "^11.2.10",
+    "react-hot-toast": "^2.4.1",
+    "react-dropzone": "^14.2.3",
+    "js-cookie": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/js-cookie": "^3.0.6",
+    "typescript": "^5.5.2"
+  }
+}
