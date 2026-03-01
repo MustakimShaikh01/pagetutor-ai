@@ -44,7 +44,7 @@ PageTutor AI transforms any uploaded PDF into a complete learning experience:
                └──────────────────┘       └───┬───────────────┘
                                               │
               ┌───────────────────────────────┼───────────────────────┐
-              │                               │                        │
+              │                               │                       │
       ┌───────▼──────┐              ┌─────────▼──────┐      ┌────────▼──────┐
       │  Auth Service│              │  Upload Service│      │ Rate Limiter  │
       │  (JWT/OAuth) │              │  (S3 + Hash)   │      │ (Redis)       │
@@ -56,17 +56,17 @@ PageTutor AI transforms any uploaded PDF into a complete learning experience:
                                    └──────┬───────────────┘
                                           │
                    ┌──────────────────────┼──────────────────┐
-                   │                      │                   │
+                   │                      │                  │
          ┌─────────▼──────┐    ┌──────────▼──────┐  ┌───────▼──────┐
-         │  LLM GPU Worker │    │  Media CPU Worker│  │ Embed Worker │
-         │  (vLLM batch)   │    │  (TTS + Video)   │  │ (PageIndex)  │
-         └─────────────────┘    └─────────────────┘  └──────────────┘
+         │  LLM GPU Worker │   │ Media CPU Worker│  │ Embed Worker │
+         │  (vLLM batch)   │   │  (TTS + Video)  │  │ (PageIndex)  │
+         └─────────────────┘   └─────────────────┘  └──────────────┘
                    │                      │                   │
       ┌────────────┼──────────────────────┼───────────────────┼──────────┐
       │            │                      │                   │          │
   ┌───▼───┐  ┌─────▼────┐  ┌─────────────▼──┐  ┌────────────▼──┐  ┌────▼───┐
-  │Postgres│ │  Qdrant   │  │   S3/MinIO     │  │    Redis      │  │  ELK   │
-  │  DB    │ │ Vector DB │  │  Object Store  │  │   Cache/Queue │  │  Stack │
+  │Postgres│ │  Qdrant  │  │   S3/MinIO     │  │    Redis      │  │  ELK   │
+  │  DB    │ │ Vector DB│  │  Object Store  │  │   Cache/Queue │  │  Stack │
   └────────┘ └──────────┘  └────────────────┘  └───────────────┘  └────────┘
 ```
 
