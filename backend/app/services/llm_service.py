@@ -252,77 +252,109 @@ def extract_key_points(full_summary: str, page_summaries: list) -> list:
     return points[:8] if points else [raw[:500]]
 
 
-def generate_flashcards(page_texts: list, n: int = 8) -> list:
+def _parse_json_output(raw: str, required_key: str) -> list:
+    """
+    Robust JSON parser — handles 4 formats models may produce:
+    1. One JSON object per line (preferred)
+    2. A JSON array on one line / multi-line
+    3. Code-fenced  ```json ... ```
+    4. Partial / truncated last line (ignored gracefully)
+    """
+    results = []
+
+    # Strategy 1: per-line JSON objects
+    for line in raw.splitlines():
+        line = line.strip()
+        # Strip leading markdown / numbering
+        line = re.sub(r'^[\s\*\-•\d\.\)]+', '', line).strip()
+        if line.startswith('{') and required_key in line:
+            try:
+                obj = json.loads(line)
+                results.append(obj)
+                continue
+            except json.JSONDecodeError:
+                pass
+            # Try fixing truncated line by appending closing brace
+            try:
+                obj = json.loads(line + '}')
+                results.append(obj)
+            except json.JSONDecodeError:
+                pass
+
+    if results:
+        return results
+
+    # Strategy 2: strip code fences and parse as array / single object
+    cleaned = re.sub(r'```(?:json)?', '', raw).strip()
+    for attempt in (cleaned, '[' + cleaned + ']'):
+        try:
+            parsed = json.loads(attempt)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and required_key in parsed:
+                return [parsed]
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: find all {...} blocks with regex
+    blocks = re.findall(r'\{[^{}]+\}', raw, re.DOTALL)
+    for block in blocks:
+        if required_key in block:
+            try:
+                results.append(json.loads(block))
+            except json.JSONDecodeError:
+                pass
+
+    return results
+
+
+def generate_flashcards(page_texts: list, n: int = 6) -> list:
     """
     Generate flashcards from the document.
     page_texts: list of (page_num, text) tuples
     """
-    # Use content-richest pages
-    sorted_pages = sorted(page_texts, key=lambda x: len(x[1]), reverse=True)[:10]
-    combined = "\n\n".join(f"[Page {p}]\n{t[:500]}" for p, t in sorted_pages)
+    sorted_pages = sorted(page_texts, key=lambda x: len(x[1]), reverse=True)[:4]
+    combined = "\n\n".join(f"[Page {p}]\n{t[:350]}" for p, t in sorted_pages)
     prompt = (
-        f"Create {n} study flashcards from this document.\n"
-        "Output each as a JSON object on its own line:\n"
-        '{"front": "question testing understanding", "back": "clear answer", "topic": "topic name"}\n'
-        "Make questions conceptual, not just factual recall.\n\n"
-        f"{combined[:2600]}"
+        f"Based on the document below, create {n} study flashcards.\n"
+        "Rules:\n"
+        "  - Each 'front' must be a COMPLETE QUESTION (not a sentence fragment)\n"
+        "  - Each 'back' must be a COMPLETE ANSWER (not a code excerpt)\n"
+        "  - Do NOT copy text verbatim — rephrase as Q&A\n"
+        "  - Output ONLY JSON, one object per line:\n"
+        '{"front": "What does X do?", "back": "X does Y by Z.", "topic": "topic name"}\n'
+        f"Produce exactly {n} lines, nothing else.\n\n"
+        f"{combined[:1800]}"
     )
-    raw = generate(prompt, system=SYSTEM_TUTOR, max_tokens=900, temperature=0.4)
+    raw = generate(prompt, system=SYSTEM_TUTOR, max_tokens=700, temperature=0.35)
+    logger.info("flashcards_raw", chars=len(raw), preview=raw[:120])
 
-    cards = []
-    for i, line in enumerate(raw.splitlines()):
-        line = line.strip().lstrip("•-* 0123456789.)")
-        if line.startswith("{") and '"front"' in line:
-            try:
-                card = json.loads(line)
-                card["card_id"] = len(cards) + 1
-                cards.append(card)
-            except json.JSONDecodeError:
-                pass
-    if not cards:
-        try:
-            arr = json.loads(raw)
-            if isinstance(arr, list):
-                cards = [{"card_id": i+1, **c} for i, c in enumerate(arr)]
-        except Exception:
-            pass
+    cards = _parse_json_output(raw, '"front"')
+    cards = [{"card_id": i + 1, **c} for i, c in enumerate(cards)]
     return cards[:n]
 
 
-def generate_quiz(page_texts: list, n: int = 5) -> list:
+def generate_quiz(page_texts: list, n: int = 4) -> list:
     """
     Generate MCQ quiz questions.
     page_texts: list of (page_num, text) tuples
     """
-    sorted_pages = sorted(page_texts, key=lambda x: len(x[1]), reverse=True)[:8]
-    combined = "\n\n".join(f"[Page {p}]\n{t[:550]}" for p, t in sorted_pages)
+    sorted_pages = sorted(page_texts, key=lambda x: len(x[1]), reverse=True)[:4]
+    combined = "\n\n".join(f"[Page {p}]\n{t[:350]}" for p, t in sorted_pages)
     prompt = (
-        f"Create {n} multiple-choice questions from this document.\n"
-        "Each must have exactly 4 options and one correct answer.\n"
-        "Output each as a JSON object on its own line:\n"
+        f"Create {n} multiple-choice quiz questions from this document.\n"
+        "Output ONLY JSON — one object per line, no extra text:\n"
         '{"question": "...", "options": ["A) ...", "B) ...", "C) ...", "D) ..."], '
-        '"correct_answer": "A", "explanation": "brief explanation"}\n\n'
-        f"{combined[:2600]}"
+        '"correct_answer": "A", "explanation": "one sentence"}\n'
+        f"Produce exactly {n} lines.\n\n"
+        f"{combined[:1800]}"
     )
-    raw = generate(prompt, system=SYSTEM_TUTOR, max_tokens=1000, temperature=0.4)
+    raw = generate(prompt, system=SYSTEM_TUTOR, max_tokens=900, temperature=0.35)
+    logger.info("quiz_raw", chars=len(raw), preview=raw[:120])
 
-    questions = []
-    for i, line in enumerate(raw.splitlines()):
-        line = line.strip().lstrip("•-* 0123456789.)")
-        if line.startswith("{") and '"question"' in line:
-            try:
-                q = json.loads(line)
-                q["question_id"] = len(questions) + 1
-                q["question_type"] = "mcq"
-                questions.append(q)
-            except json.JSONDecodeError:
-                pass
-    if not questions:
-        try:
-            arr = json.loads(raw)
-            if isinstance(arr, list):
-                questions = [{"question_id": i+1, "question_type": "mcq", **q}
-                             for i, q in enumerate(arr)]
-        except Exception:
-            pass
+    questions = _parse_json_output(raw, '"question"')
+    questions = [
+        {"question_id": i + 1, "question_type": "mcq", **q}
+        for i, q in enumerate(questions)
+    ]
     return questions[:n]

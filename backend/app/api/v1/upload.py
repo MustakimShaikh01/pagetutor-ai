@@ -161,6 +161,9 @@ def compute_sha256(file_bytes: bytes) -> str:
     """Compute SHA-256 hash for deduplication."""
     return hashlib.sha256(file_bytes).hexdigest()
 
+def compute_sha256(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
+
 
 # ===========================================================
 # UPLOAD PDF

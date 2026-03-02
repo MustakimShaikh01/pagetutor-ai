@@ -1497,7 +1497,6 @@ a:hover {
 
 /* Markdown-like result text */
 .result-markdown {
-  white-space: pre-wrap;
   line-height: 1.8;
   color: var(--color-text-secondary);
   font-size: 0.95rem;
@@ -1506,6 +1505,57 @@ a:hover {
   padding: 20px;
   border: 1px solid var(--color-border);
 }
+
+.result-markdown h1,
+.result-markdown h2,
+.result-markdown h3 {
+  color: var(--color-text-primary);
+  margin: 16px 0 8px;
+  font-weight: 600;
+}
+
+.result-markdown h3 {
+  font-size: 1rem;
+}
+
+.result-markdown h2 {
+  font-size: 1.1rem;
+}
+
+.result-markdown p {
+  margin: 10px 0;
+}
+
+.result-markdown strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.result-markdown em {
+  font-style: italic;
+}
+
+.result-markdown code {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: 'Fira Code', 'Courier New', monospace;
+  font-size: 0.88em;
+}
+
+.result-markdown li {
+  padding: 4px 0 4px 20px;
+  position: relative;
+}
+
+.result-markdown li::before {
+  content: '•';
+  position: absolute;
+  left: 6px;
+  color: var(--color-accent);
+}
+
 
 /* Learning points */
 .result-points-list {

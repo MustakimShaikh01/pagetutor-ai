@@ -43,6 +43,30 @@ interface JobStatus {
     error_message?: string;
 }
 
+/* ── Lightweight markdown renderer ── */
+function renderMarkdown(text: string): string {
+    return text
+        // ### Heading 3 → <h3>
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        // ## Heading 2 → <h2>
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        // # Heading 1 → <h1>
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // **bold** → <strong>
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        // *italic* → <em>
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // `code` → <code>
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // bullet points
+        .replace(/^[•\-\*] (.+)$/gm, '<li>$1</li>')
+        // double newline → paragraph break
+        .replace(/\n\n/g, '</p><p>')
+        // wrap in paragraph
+        .replace(/^(?!<[hli])(.+)$/gm, (m) => m.trim() ? m : '')
+        .trim();
+}
+
 /* ── helpers ── */
 function Section({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) {
     return (
@@ -211,7 +235,10 @@ export default function ResultsPage() {
                     {activeTab === 'summary' && (
                         <Section icon="📝" title="AI Summary">
                             {result.summary ? (
-                                <div className="result-markdown">{result.summary}</div>
+                                <div
+                                    className="result-markdown"
+                                    dangerouslySetInnerHTML={{ __html: '<p>' + renderMarkdown(result.summary) + '</p>' }}
+                                />
                             ) : (
                                 <p className="result-empty">No summary generated.</p>
                             )}
