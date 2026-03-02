@@ -64,7 +64,7 @@ requests==2.32.3
 
 # --- File Hashing & Validation ---
 python-magic==0.4.27
-hashlib-compat==1.0.0
+# hashlib-compat==1.0.0
 
 # --- Monitoring ---
 prometheus-client==0.20.0
