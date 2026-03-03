@@ -151,4 +151,6 @@ GitHub: [https://github.com/MustakimShaikh01](https://github.com/MustakimShaikh0
 
 MIT License © 2024 Mustakim Shaikh
 # pagetutor-ai
-https://github.com/MustakimShaikh01/pagetutor-ai/blob/main/asset/screencapture-localhost-3000-2026-03-03-13_34_51.png
+[![PageTutor-ai]([image-url](https://github.com/MustakimShaikh01/pagetutor-ai/blob/main/asset/screencapture-localhost-3000-2026-03-03-13_34_51.png))]([link-url](https://github.com/MustakimShaikh01/pagetutor-ai/blob/main/asset/screencapture-localhost-3000-2026-03-03-13_34_51.png))
+
+
